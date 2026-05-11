@@ -68,8 +68,8 @@ public interface ReadableBuffer extends Retainable
     interface Target
     {
         /**
-         * @param byteBufferToWrite the buffer to be written
+         * @param input the buffer to be written
          */
-        void write(ByteBuffer byteBufferToWrite) throws IOException;
+        void write(ByteBuffer input) throws IOException;
     }
 }

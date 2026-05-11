@@ -63,9 +63,9 @@ public interface WritableBuffer extends Retainable
     interface Fount
     {
         /**
-         * @param byteBufferToReadInto the buffer to read into
+         * @param output the buffer to read into
          * @return true if EOF was reached while reading, false otherwise
          */
-        boolean read(ByteBuffer byteBufferToReadInto) throws IOException;
+        boolean read(ByteBuffer output) throws IOException;
     }
 }
