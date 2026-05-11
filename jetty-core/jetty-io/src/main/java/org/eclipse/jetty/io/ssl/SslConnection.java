@@ -122,7 +122,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
     private final SslEndPoint _sslEndPoint;
     private final boolean _encryptedDirectBuffers;
     private final boolean _decryptedDirectBuffers;
-    private WritableBuffer _decryptedInput;
+    private ReadableBuffer _decryptedInput;
     private WritableBuffer _encryptedInput;
     private WritableBuffer _encryptedOutput;
     private boolean _closedOutbound;
@@ -455,7 +455,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                 flushState = _flushState;
                 encryptedInputRemainingBytes = _encryptedInput == null ? -1 : remainingForRead(_encryptedInput);
                 encryptedOutputRemainingBytes = _encryptedOutput == null ? -1 : remainingForRead(_encryptedOutput);
-                decryptedInputRemainingBytes = _decryptedInput == null ? -1 : remainingForRead(_decryptedInput);
+                decryptedInputRemainingBytes = _decryptedInput == null ? -1 : _decryptedInput.remaining();
             }
             else
             {
@@ -489,7 +489,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
     private void lockedReleaseEmptyDecryptedInputBuffer()
     {
         assert _lock.isHeldByCurrentThread();
-        if (_decryptedInput != null && remainingForRead(_decryptedInput) == 0L)
+        if (_decryptedInput != null && _decryptedInput.remaining() == 0L)
         {
             _decryptedInput.release();
             _decryptedInput = null;
@@ -709,11 +709,9 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                             return filled = 0;
 
                         // Do we already have some decrypted data?
-                        if (_decryptedInput != null && remainingForRead(_decryptedInput) > 0L)
+                        if (_decryptedInput != null && _decryptedInput.remaining() > 0L)
                         {
-                            ReadableBuffer rb = _decryptedInput.toReadable();
-                            filled = append(buffer, rb);
-                            rb.toWritable();
+                            filled = append(buffer, _decryptedInput);
                             return filled;
                         }
 
@@ -765,13 +763,14 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                 }
                                 else
                                 {
-                                    _decryptedInput = _bufferPool.acquire(appBufferSize, _decryptedDirectBuffers);
-                                    appIn = _decryptedInput;
+                                    WritableBuffer wb = _bufferPool.acquire(appBufferSize, _decryptedDirectBuffers);
+                                    _decryptedInput = wb.toReadable();
+                                    appIn = _decryptedInput.toWritable();
                                 }
                             }
                             else
                             {
-                                appIn = _decryptedInput;
+                                appIn = _decryptedInput.toWritable();
                             }
 
                             // Let's try reading some encrypted data... even if we have some already.
@@ -812,6 +811,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                             }
                             finally
                             {
+                                appIn.toReadable();
                                 readableEncryptedInput.toWritable();
                             }
                             if (LOG.isDebugEnabled())
@@ -878,7 +878,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                     // too small. Release the decrypted input buffer so it will be re-acquired
                                     // with the larger capacity.
                                     // See also system property "jsse.SSLEngine.acceptLargeFragments".
-                                    if ((_decryptedInput == null || remainingForRead(_decryptedInput) == 0L) && appBufferSize < getApplicationBufferSize())
+                                    if ((_decryptedInput == null || _decryptedInput.remaining() == 0L) && appBufferSize < getApplicationBufferSize())
                                     {
                                         lockedReleaseEmptyDecryptedInputBuffer();
                                         continue;
@@ -899,9 +899,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                     {
                                         if (appInIsBuffer)
                                             return filled = unwrapResult.bytesProduced();
-                                        ReadableBuffer rb = _decryptedInput.toReadable();
-                                        filled = append(buffer, rb);
-                                        rb.toWritable();
+                                        filled = append(buffer, _decryptedInput);
                                         return filled;
                                     }
 
@@ -969,7 +967,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                         return;
 
                     // Fillable if we have decrypted input OR enough encrypted input.
-                    fillable = (_decryptedInput != null && remainingForRead(_decryptedInput) > 0L) || (_encryptedInput != null && remainingForRead(_encryptedInput) > 0L && !_underflown);
+                    fillable = (_decryptedInput != null && _decryptedInput.remaining() > 0L) || (_encryptedInput != null && remainingForRead(_encryptedInput) > 0L && !_underflown);
 
                     HandshakeStatus status = _sslEngine.getHandshakeStatus();
                     switch (status)
@@ -1602,7 +1600,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
             {
                 inputsEmpty =
                     (_encryptedInput == null || remainingForRead(_encryptedInput) == 0L) &&
-                        (_decryptedInput == null || remainingForRead(_decryptedInput) == 0L);
+                        (_decryptedInput == null || _decryptedInput.remaining() == 0L);
             }
             return inputsEmpty && (getEndPoint().isInputShutdown() || isInboundDone());
         }
