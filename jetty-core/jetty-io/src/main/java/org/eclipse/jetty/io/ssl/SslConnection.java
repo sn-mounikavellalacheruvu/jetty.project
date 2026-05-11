@@ -348,11 +348,12 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
         return _encryptedInput.toWritable();
     }
 
-    private void lockedAcquireEncryptedOutput()
+    private WritableBuffer lockedAcquireEncryptedOutput()
     {
         assert _lock.isHeldByCurrentThread();
         if (_encryptedOutput == null)
             _encryptedOutput = _bufferPool.acquire(getPacketBufferSize(), _encryptedDirectBuffers).toReadable();
+        return _encryptedOutput.compact();
     }
 
     @Override
@@ -1189,7 +1190,6 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                             }
 
                             int packetBufferSize = getPacketBufferSize();
-                            lockedAcquireEncryptedOutput();
 
                             if (_handshake.compareAndSet(HandshakeState.INITIAL, HandshakeState.HANDSHAKE))
                             {
@@ -1199,7 +1199,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
 
                             // We call sslEngine.wrap to try to take bytes from appOuts
                             // buffers and encrypt them into the _encryptedOutput buffer.
-                            WritableBuffer encryptedOutputBuffer = _encryptedOutput.compact();
+                            WritableBuffer encryptedOutputBuffer = lockedAcquireEncryptedOutput();
                             SSLEngineResult[] wrapResultArray = new SSLEngineResult[1];
                             try
                             {
