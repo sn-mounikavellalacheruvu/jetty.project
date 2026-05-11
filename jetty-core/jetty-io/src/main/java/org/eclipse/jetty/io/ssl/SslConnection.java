@@ -340,17 +340,17 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
         return Math.max(hsSize, size);
     }
 
-    private void lockedAcquireEncryptedInput()
+    private WritableBuffer lockedAcquireEncryptedInput()
     {
         assert _lock.isHeldByCurrentThread();
         if (_encryptedInput == null)
             _encryptedInput = _bufferPool.acquire(getPacketBufferSize(), _encryptedDirectBuffers).toReadable();
+        return _encryptedInput.toWritable();
     }
 
     private void lockedAcquireEncryptedOutput()
     {
         assert _lock.isHeldByCurrentThread();
-        // TODO: before the output was done with the BBP only.
         if (_encryptedOutput == null)
             _encryptedOutput = _bufferPool.acquire(getPacketBufferSize(), _encryptedDirectBuffers).toReadable();
     }
@@ -360,13 +360,12 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
     {
         try (AutoLock ignored = _lock.lock())
         {
-            lockedAcquireEncryptedInput();
-            ReadableBuffer rb = ReadableBuffer.wrap(buffer);
-            if (rb.remaining() > _encryptedInput.remaining())
-                throw new IllegalStateException("too much to upgrade");
-            WritableBuffer wb = _encryptedInput.toWritable();
+            WritableBuffer wb = lockedAcquireEncryptedInput();
             try
             {
+                ReadableBuffer rb = ReadableBuffer.wrap(buffer);
+                if (rb.remaining() > wb.remaining())
+                    throw new IllegalStateException("too much to upgrade");
                 wb.put(rb);
             }
             finally
@@ -756,8 +755,6 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                     throw new IllegalStateException("Unexpected HandshakeStatus " + status);
                             }
 
-                            lockedAcquireEncryptedInput();
-
                             // can we use the passed buffer if it is big enough
                             WritableBuffer appIn;
                             boolean appInIsBuffer = false;
@@ -783,7 +780,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
 
                             // Let's try reading some encrypted data... even if we have some already.
                             int netFilled;
-                            WritableBuffer wb = _encryptedInput.toWritable();
+                            WritableBuffer wb = lockedAcquireEncryptedInput();
                             try
                             {
                                 netFilled = networkFill(wb);
@@ -1808,6 +1805,9 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
     // TODO this looks like a useful helper that might become very common. Generalize?
     //  Or create a ReadableBuffer API to query WritableBuffer remaining without flipping?
     //  Or expose both methods (remainingForWrite() and remainingForRead()) in both ReadableBuffer and WritableBuffer?
+    //  The latter will prevent bugs that are easy to introduce where ReadableBuffer.remaining() (how many bytes can still be
+    //  consumed from the buffer) is called in place of WritableBuffer.remaining() (how many free bytes are there in the buffer)
+    //  and vice-versa.
     private static int remainingForWrite(ReadableBuffer rb)
     {
         WritableBuffer wb = rb.toWritable();
