@@ -21,15 +21,37 @@ import org.eclipse.jetty.util.Retainable;
 import org.eclipse.jetty.util.internal.AccumulatingReadBuffer;
 import org.eclipse.jetty.util.internal.FixedSizeBuffer;
 
+/**
+ * Wraps a byte container, exposing a read-only API. The byte container could be for instance:
+ * <ul>
+ *  <li>a single NIO ByteBuffer</li>
+ *  <li>a list of NIO ByteBuffers</li>
+ *  <li>a FileChannel</li>
+ *  </ul>
+ *  Note that {@link #toWritable()} can be called to access the write-only API if the byte container is not read-only.
+ */
 public interface ReadableBuffer extends Retainable
 {
+    /**
+     * An empty ReadableBuffer that cannot be flipped to write-only mode.
+     */
     ReadableBuffer EMPTY = new FixedSizeBuffer.ReadOnly(ByteBuffer.allocate(0).flip(), Retainable.NON_RETAINABLE);
 
+    /**
+     * Wraps the given NIO ByteBuffer that already is in flush node, using a new {@link ReferenceCounter} for retainability.
+     * @param byteBuffer the NIO byte buffer
+     * @return a ReadableBuffer
+     */
     static ReadableBuffer wrap(ByteBuffer byteBuffer)
     {
         return new FixedSizeBuffer(byteBuffer, new ReferenceCounter(), false);
     }
 
+    /**
+     * Wraps the given ReadableBuffer list, using a new {@link ReferenceCounter} for retainability.
+     * @param readableBuffers the ReadableBuffer list
+     * @return a ReadableBuffer
+     */
     static ReadableBuffer accumulate(List<ReadableBuffer> readableBuffers)
     {
         if (readableBuffers.isEmpty())
@@ -37,37 +59,111 @@ public interface ReadableBuffer extends Retainable
         return new AccumulatingReadBuffer(readableBuffers);
     }
 
+    /**
+     * Returns the current position of this ReadableBuffer, where the next bytes are to be read.
+     * This value always lies between 0 and {@link #capacity()}.
+     * @return the current position
+     */
     long position();
 
+    /**
+     * Changes the current position of this ReadableBuffer, where the next bytes are to be read.
+     * Must always be between 0 and {@link #capacity()}.
+     * @param newPosition the new current position
+     */
     void position(long newPosition);
 
+    /**
+     * Returns the capacity of this ReadableBuffer, in bytes.
+     * @return the capacity of this ReadableBuffer
+     */
     long capacity();
 
+    /**
+     * Returns how many spare bytes are left for reading, between {@link #position()} and the {@link WritableBuffer#position()}.
+     * @return how many spare bytes are left for reading
+     */
     long remaining();
 
+    /**
+     * Reads a single byte at the current position.
+     * @throws java.nio.BufferUnderflowException – If the buffer's {@link #remaining()} is less than one.
+     */
     byte get();
 
+    /**
+     * Reads a short at the current position.
+     * @throws java.nio.BufferUnderflowException – If the buffer's {@link #remaining()} is less than two.
+     */
     short getShort();
 
+    /**
+     * Reads an int at the current position.
+     * @throws java.nio.BufferUnderflowException – If the buffer's {@link #remaining()} is less than four.
+     */
     int getInt();
 
+    /**
+     * Reads a long at the current position.
+     * @throws java.nio.BufferUnderflowException – If the buffer's {@link #remaining()} is less than eight.
+     */
     long getLong();
 
+    /**
+     * Slices this ReadableBuffer, {@link Retainable#retain() retaining} it in the process.
+     * @return a new ReadableBuffer with a position of 0 that indexes the current ReadableBuffer's {@link #position()}
+     * and an adjusted capacity equal to the current ReadableBuffer's {@link #capacity()} - the current
+     * ReadableBuffer's {@link #position()}.
+     */
     ReadableBuffer slice();
 
+    /**
+     * Slices this ReadableBuffer, {@link Retainable#retain() retaining} it in the process.
+     * @param position
+     * @param length
+     * @return a new ReadableBuffer with a position of 0 that indexes the current ReadableBuffer's {@link #position()} + {@code position}
+     * and an adjusted capacity equal to {@code length}.
+     */
     ReadableBuffer slice(long position, long length);
 
+    /**
+     * Compacts this ReadableBuffer, by flipping it to a {@link WritableBuffer} with the unread bytes (between
+     * {@link #position()} and {@link #remaining()}) moved to position 0.
+     * @return this, typed as a {@link WritableBuffer}
+     * // TODO throw ISE when isRetained() == true?
+     */
     WritableBuffer compact();
 
+    /**
+     * Clears this ReadableBuffer, by flipping it to an empty {@link WritableBuffer} with {@link WritableBuffer#position()} == 0.
+     * @return this, typed as a {@link WritableBuffer}
+     * // TODO throw ISE when isRetained() == true?
+     */
     WritableBuffer clear();
 
+    /**
+     * Flips this WritableBuffer to fill mode
+     * @return this, typed as a {@link ReadableBuffer}
+     * // TODO throw ISE when isRetained() == true?
+     */
     WritableBuffer toWritable();
 
+    /**
+     * Flushes this buffer to the given Target.
+     * @param target the target
+     * @return the # of bytes written
+     * @throws IOException when an IOException occurs
+     */
     long writeTo(Target target) throws IOException;
 
+    /**
+     * Base interface of the Target (i.e.: byte destination) used to flush a ReadableBuffer via the NIO ByteBuffer API.
+     */
     interface Target
     {
         /**
+         * Flushes a given NIO ByteBuffer. Note that this method can be called more than once if the {@code input} byte buffer
+         * is depleted, for instance if the WritableBuffer is backed by more than one NIO ByteBuffer.
          * @param input the buffer to be written
          */
         void write(ByteBuffer input) throws IOException;
