@@ -123,12 +123,12 @@ public class FixedSizeBufferTest
     {
         WritableBuffer wb = WritableBuffer.allocate(10, false);
 
-        long read = wb.readFrom(byteBufferToReadInto ->
+        long read = wb.readFrom(output ->
         {
-            byteBufferToReadInto.put((byte)1);
-            byteBufferToReadInto.put((byte)2);
-            byteBufferToReadInto.put((byte)3);
-            byteBufferToReadInto.put((byte)4);
+            output.put((byte)1);
+            output.put((byte)2);
+            output.put((byte)3);
+            output.put((byte)4);
             return true;
         });
         assertEquals(4L, read);
@@ -142,7 +142,7 @@ public class FixedSizeBufferTest
         assertEquals(0L, rb.remaining());
 
         wb = rb.toWritable();
-        read = wb.readFrom(byteBufferToReadInto -> true);
+        read = wb.readFrom(output -> true);
         assertEquals(-1L, read);
     }
 
@@ -156,15 +156,15 @@ public class FixedSizeBufferTest
             .flip());
 
         List<ByteBuffer> writtenByteBuffers = new ArrayList<>();
-        long written = rb.writeTo(byteBufferToWrite ->
+        long written = rb.writeTo(input ->
         {
-            assertEquals(0, byteBufferToWrite.position());
-            assertEquals(12, byteBufferToWrite.remaining());
-            assertEquals(1, byteBufferToWrite.getInt());
-            assertEquals(2, byteBufferToWrite.getInt());
-            assertEquals(8, byteBufferToWrite.position());
-            assertEquals(4, byteBufferToWrite.remaining());
-            writtenByteBuffers.add(byteBufferToWrite);
+            assertEquals(0, input.position());
+            assertEquals(12, input.remaining());
+            assertEquals(1, input.getInt());
+            assertEquals(2, input.getInt());
+            assertEquals(8, input.position());
+            assertEquals(4, input.remaining());
+            writtenByteBuffers.add(input);
         });
         assertEquals(8, written);
         assertEquals(1, writtenByteBuffers.size());

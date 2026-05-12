@@ -359,6 +359,9 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
     @Override
     public void onUpgradeTo(ByteBuffer buffer)
     {
+        if (BufferUtil.remaining(buffer) == 0)
+            return;
+
         try (AutoLock ignored = _lock.lock())
         {
             WritableBuffer wb = lockedAcquireEncryptedInput();
@@ -540,17 +543,17 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
 
     protected int networkFill(WritableBuffer input) throws IOException
     {
-        return (int)input.readFrom(byteBufferToReadInto ->
+        return (int)input.readFrom(output ->
         {
-            byteBufferToReadInto.flip();
+            output.flip();
             try
             {
-                int filled = getEndPoint().fill(byteBufferToReadInto);
+                int filled = getEndPoint().fill(output);
                 return filled == -1;
             }
             finally
             {
-                BufferUtil.flipToFill(byteBufferToReadInto);
+                BufferUtil.flipToFill(output);
             }
         });
     }
@@ -558,7 +561,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
     protected boolean networkFlush(ReadableBuffer output) throws IOException
     {
         long toBeWritten = output.remaining();
-        long written = output.writeTo(byteBufferToWrite -> getEndPoint().flush(byteBufferToWrite));
+        long written = output.writeTo(input -> getEndPoint().flush(input));
         return toBeWritten == written;
     }
 

@@ -571,7 +571,7 @@ public class AccumulatingReadBufferTest
 
         List<Integer> writtenIntegers = new ArrayList<>();
         assertEquals(4L,
-            acc.writeTo(byteBufferToWrite -> writtenIntegers.add(byteBufferToWrite.getInt()))
+            acc.writeTo(input -> writtenIntegers.add(input.getInt()))
         );
         assertEquals(4, acc.position());
         assertEquals(12, acc.remaining());
@@ -580,11 +580,11 @@ public class AccumulatingReadBufferTest
 
         writtenIntegers.clear();
         assertEquals(12L,
-            acc.writeTo(byteBufferToWrite ->
+            acc.writeTo(input ->
             {
-                while (byteBufferToWrite.hasRemaining())
+                while (input.hasRemaining())
                 {
-                    writtenIntegers.add(byteBufferToWrite.getInt());
+                    writtenIntegers.add(input.getInt());
                 }
             })
         );
@@ -617,10 +617,10 @@ public class AccumulatingReadBufferTest
         AtomicInteger counter = new AtomicInteger();
         List<Number> written = new ArrayList<>();
         assertEquals(2L,
-            acc.writeTo(byteBufferToWrite ->
+            acc.writeTo(input ->
             {
                 counter.incrementAndGet();
-                written.add(byteBufferToWrite.getShort());
+                written.add(input.getShort());
             })
         );
         assertEquals(3, acc.position());
@@ -632,12 +632,12 @@ public class AccumulatingReadBufferTest
         written.clear();
         counter.set(0);
         assertEquals(6L,
-            acc.writeTo(byteBufferToWrite ->
+            acc.writeTo(input ->
             {
                 if (counter.getAndIncrement() == 0)
-                    written.add(byteBufferToWrite.getShort());
+                    written.add(input.getShort());
                 else
-                    written.add(byteBufferToWrite.getInt());
+                    written.add(input.getInt());
             })
         );
         assertEquals(10, acc.position());
@@ -664,10 +664,10 @@ public class AccumulatingReadBufferTest
         AtomicInteger counter = new AtomicInteger();
         List<Number> written = new ArrayList<>();
         assertEquals(2L,
-            acc.writeTo(byteBufferToWrite ->
+            acc.writeTo(input ->
             {
                 counter.getAndIncrement();
-                written.add(byteBufferToWrite.getShort());
+                written.add(input.getShort());
             })
         );
         assertEquals(2, acc.position());
@@ -679,17 +679,17 @@ public class AccumulatingReadBufferTest
         counter.set(0);
         written.clear();
         assertEquals(4L,
-            acc.writeTo(byteBufferToWrite ->
+            acc.writeTo(input ->
             {
                 if (counter.getAndIncrement() == 0)
                 {
-                    written.add(byteBufferToWrite.getShort());
-                    assertEquals(0, byteBufferToWrite.remaining());
+                    written.add(input.getShort());
+                    assertEquals(0, input.remaining());
                 }
                 else
                 {
-                    written.add(byteBufferToWrite.getShort());
-                    assertEquals(2, byteBufferToWrite.remaining());
+                    written.add(input.getShort());
+                    assertEquals(2, input.remaining());
                 }
             })
         );
