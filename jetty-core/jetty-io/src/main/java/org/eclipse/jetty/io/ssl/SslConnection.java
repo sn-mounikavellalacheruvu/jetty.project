@@ -354,8 +354,10 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
     {
         assert _lock.isHeldByCurrentThread();
         if (_encryptedOutput == null)
-            _encryptedOutput = _bufferPool.acquire(getPacketBufferSize(), _encryptedDirectBuffers).toReadable();
-        return _encryptedOutput.compact();
+            return _bufferPool.acquire(getPacketBufferSize(), _encryptedDirectBuffers);
+        WritableBuffer wb = _encryptedOutput.compact();
+        _encryptedOutput = null;
+        return wb;
     }
 
     @Override
@@ -1217,7 +1219,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                             }
                             finally
                             {
-                                encryptedOutputBuffer.toReadable();
+                                _encryptedOutput = encryptedOutputBuffer.toReadable();
                             }
                             SSLEngineResult wrapResult = wrapResultArray[0];
 
