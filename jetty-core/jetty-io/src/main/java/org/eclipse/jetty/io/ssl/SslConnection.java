@@ -366,21 +366,20 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
         if (BufferUtil.remaining(buffer) == 0)
             return;
 
+        WritableBuffer wb;
         try (AutoLock ignored = _lock.lock())
         {
-            WritableBuffer wb = lockedAcquireEncryptedInput();
-            try
-            {
-                ReadableBuffer rb = ReadableBuffer.wrap(buffer);
-                if (rb.remaining() > wb.remaining())
-                    throw new IllegalStateException("too much to upgrade");
-                wb.put(rb);
-            }
-            finally
-            {
-                _encryptedInput = wb.toReadable();
-            }
+            wb = lockedAcquireEncryptedInput();
         }
+
+        ReadableBuffer rb = ReadableBuffer.wrap(buffer);
+        if (rb.remaining() > wb.remaining())
+        {
+            wb.release();
+            throw new IllegalStateException("too much to upgrade");
+        }
+        wb.put(rb);
+        _encryptedInput = wb.toReadable();
     }
 
     @Override
