@@ -135,11 +135,10 @@ public interface ReadableBuffer extends Retainable
     WritableBuffer compact();
 
     /**
-     * Clears this ReadableBuffer, by flipping it to an empty {@link WritableBuffer} with {@link WritableBuffer#position()} == 0.
-     * @return this, typed as a {@link WritableBuffer}
+     * Drains and drops all unread bytes from this ReadableBuffer and resets the position to 0.
      * // TODO throw ISE when isRetained() == true?
      */
-    WritableBuffer clear();
+    void drain();
 
     /**
      * Flips this WritableBuffer to fill mode

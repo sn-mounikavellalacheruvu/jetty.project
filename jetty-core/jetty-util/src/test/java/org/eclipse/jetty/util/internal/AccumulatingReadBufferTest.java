@@ -516,7 +516,7 @@ public class AccumulatingReadBufferTest
     }
 
     @Test
-    public void testClear()
+    public void testDrain()
     {
         ReadableBuffer rb1 = ReadableBuffer.wrap(ByteBuffer.allocate(10)
             .put((byte)0)
@@ -528,7 +528,12 @@ public class AccumulatingReadBufferTest
             .flip());
         ReadableBuffer acc = ReadableBuffer.accumulate(List.of(rb1, rb2));
 
-        assertThrows(IllegalStateException.class, acc::clear);
+        assertEquals(0, acc.position());
+        assertEquals(4, acc.remaining());
+
+        acc.drain();
+        assertEquals(0, acc.position());
+        assertEquals(0, acc.remaining());
     }
 
     @Test

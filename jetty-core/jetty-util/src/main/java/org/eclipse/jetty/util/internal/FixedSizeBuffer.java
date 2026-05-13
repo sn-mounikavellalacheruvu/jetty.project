@@ -193,13 +193,12 @@ public class FixedSizeBuffer implements WritableBuffer, ReadableBuffer
     }
 
     @Override
-    public WritableBuffer clear()
+    public void drain()
     {
         if (flushPosition != -1)
-            throw new IllegalStateException("Cannot clear buffer in write mode");
-        toWritable();
+            throw new IllegalStateException("Cannot drain buffer in write mode");
         byteBuffer.position(0);
-        return this;
+        byteBuffer.limit(0);
     }
 
     @Override

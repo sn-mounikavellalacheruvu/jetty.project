@@ -212,22 +212,26 @@ public class FixedSizeBufferTest
     }
 
     @Test
-    public void testReadableBufferClear()
+    public void testReadableBufferDrain()
     {
-        ReadableBuffer rb = ReadableBuffer.wrap(ByteBuffer.allocate(10)
+        ReadableBuffer rb = ReadableBuffer.wrap(ByteBuffer.allocate(20)
             .putInt(1)
             .putInt(2)
+            .putInt(3)
             .flip());
 
-        assertEquals(8, rb.remaining());
+        assertEquals(12, rb.remaining());
         assertEquals(1, rb.getInt());
         assertEquals(2, rb.getInt());
+        assertEquals(4, rb.remaining());
+
+        rb.drain();
+        assertEquals(0, rb.position());
         assertEquals(0, rb.remaining());
 
-        WritableBuffer wb = rb.clear();
-
+        WritableBuffer wb = rb.toWritable();
         assertEquals(0, wb.position());
-        assertEquals(10, wb.remaining());
+        assertEquals(20, wb.remaining());
     }
 
     @Test

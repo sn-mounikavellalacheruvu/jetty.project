@@ -514,9 +514,9 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
     {
         assert _lock.isHeldByCurrentThread();
         if (_encryptedInput != null)
-            _encryptedInput.clear().toReadable();
+            _encryptedInput.drain();
         if (_decryptedInput != null)
-            _decryptedInput.clear().toReadable();
+            _decryptedInput.drain();
         lockedReleaseEmptyInputBuffers();
     }
 
@@ -530,7 +530,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
     {
         assert _lock.isHeldByCurrentThread();
         if (_encryptedOutput != null)
-            _encryptedOutput.position(0L);
+            _encryptedOutput.drain();
         lockedReleaseEmptyEncryptedOutputBuffer();
     }
 
@@ -864,7 +864,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                     // Are we out of space?
                                     if (remainingForWrite(_encryptedInput) == 0L)
                                     {
-                                        _encryptedInput.clear().toReadable();
+                                        _encryptedInput.drain();
                                         throw new SSLHandshakeException("Encrypted buffer max length exceeded");
                                     }
 

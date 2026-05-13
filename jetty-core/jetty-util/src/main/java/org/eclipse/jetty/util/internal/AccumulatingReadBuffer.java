@@ -49,7 +49,7 @@ public class AccumulatingReadBuffer implements ReadableBuffer
         this.position = readableBuffers.getFirst().position();
     }
 
-    private void updateLimits(List<ReadableBuffer> readableBuffers, List<Long> limits)
+    private static void updateLimits(List<ReadableBuffer> readableBuffers, List<Long> limits)
     {
         limits.clear();
         for (ReadableBuffer readableBuffer : readableBuffers)
@@ -244,9 +244,11 @@ public class AccumulatingReadBuffer implements ReadableBuffer
     }
 
     @Override
-    public WritableBuffer clear()
+    public void drain()
     {
-        throw new IllegalStateException("Read-only instance");
+        readableBuffers.forEach(Retainable::release);
+        readableBuffers.clear();
+        limits.clear();
     }
 
     @Override
@@ -307,6 +309,7 @@ public class AccumulatingReadBuffer implements ReadableBuffer
         {
             readableBuffers.forEach(Retainable::release);
             readableBuffers.clear();
+            limits.clear();
         }
         return released;
     }
