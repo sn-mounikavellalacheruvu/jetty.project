@@ -28,7 +28,7 @@ import org.eclipse.jetty.util.internal.FixedSizeBuffer;
  *  </ul>
  *  Note that {@link #toReadable()} can always be called to access the read-only API.
  */
-public interface WritableBuffer extends Retainable
+public interface WritableBuffer
 {
     /**
      * An empty WritableBuffer that cannot be flipped to read-only mode.
@@ -36,19 +36,20 @@ public interface WritableBuffer extends Retainable
     WritableBuffer EMPTY = new FixedSizeBuffer.WriteOnly(ByteBuffer.allocate(0), Retainable.NON_RETAINABLE);
 
     /**
-     * Wraps the given NIO ByteBuffer that already is in fill node, using a new {@link ReferenceCounter} for retainability.
+     * Wraps the given NIO ByteBuffer that already is in fill node, using a new {@link Retainable.ReferenceCounter} for
+     * handling the release.
      * @param byteBuffer the NIO byte buffer
      * @return a WritableBuffer
      */
     static WritableBuffer wrap(ByteBuffer byteBuffer)
     {
-        return new FixedSizeBuffer(byteBuffer, new ReferenceCounter(), true);
+        return new FixedSizeBuffer(byteBuffer, new Retainable.ReferenceCounter(), true);
     }
 
     /**
      * Wraps the given NIO ByteBuffer that already is in fill node.
      * @param byteBuffer the NIO byte buffer
-     * @param retainable use the given {@link Retainable} for retainability
+     * @param retainable use the given {@link Retainable} for handling the release
      * @return a WritableBuffer
      */
     static WritableBuffer wrap(ByteBuffer byteBuffer, Retainable retainable)
@@ -57,14 +58,15 @@ public interface WritableBuffer extends Retainable
     }
 
     /**
-     * Allocates a new WritableBuffer wrapping a NIO ByteBuffer in fill node.
+     * Allocates a new WritableBuffer wrapping a NIO ByteBuffer in fill node, using a new {@link Retainable.ReferenceCounter} for
+     * handling the release.
      * @param size the size of the buffer
      * @param direct true for a direct buffer, false for a heap one
      * @return a WritableBuffer
      */
     static WritableBuffer allocate(int size, boolean direct)
     {
-        return new FixedSizeBuffer(direct ? ByteBuffer.allocateDirect(size) : ByteBuffer.allocate(size), new ReferenceCounter(), true);
+        return new FixedSizeBuffer(direct ? ByteBuffer.allocateDirect(size) : ByteBuffer.allocate(size), new Retainable.ReferenceCounter(), true);
     }
 
     /**
@@ -138,6 +140,15 @@ public interface WritableBuffer extends Retainable
      * @return this, typed as a {@link ReadableBuffer}
      */
     ReadableBuffer toReadable();
+
+    /**
+     * <p>Releases this resource, potentially decrementing a reference count (if any).</p>
+     *
+     * @return {@code true} when the reference count goes to zero or if there was no reference count,
+     *         {@code false} otherwise.
+     * @see Retainable#release()
+     */
+    boolean release();
 
     /**
      * Fills this buffer with the given Fount.

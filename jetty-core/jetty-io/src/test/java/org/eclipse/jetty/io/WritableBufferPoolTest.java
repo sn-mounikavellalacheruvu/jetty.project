@@ -23,28 +23,15 @@ import org.junit.jupiter.params.provider.MethodSource;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class WritableBufferPoolTest
 {
-
     static List<WritableBufferPool> sources()
     {
         return List.of(
             WritableBufferPool.NON_POOLING,
             WritableBufferPool.wrap(new ArrayByteBufferPool())
         );
-    }
-
-    @ParameterizedTest
-    @MethodSource("sources")
-    public void testAcquireRetainRelease(WritableBufferPool writableBufferPool)
-    {
-        WritableBuffer wbr = writableBufferPool.acquire(10, false);
-        wbr.retain();
-        assertFalse(wbr.release());
-        assertTrue(wbr.release());
     }
 
     @ParameterizedTest
