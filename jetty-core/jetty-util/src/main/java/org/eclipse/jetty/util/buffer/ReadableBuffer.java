@@ -119,8 +119,8 @@ public interface ReadableBuffer extends Retainable
 
     /**
      * Slices this ReadableBuffer, {@link Retainable#retain() retaining} it in the process.
-     * @param position
-     * @param length
+     * @param position the absolute position of the current buffer to use as the slice's position 0. Must be &lt; {@link #capacity()}.
+     * @param length the length of the slice. Must be &lt; {@link #capacity()} - position - 1.
      * @return a new ReadableBuffer with a position of 0 that indexes the current ReadableBuffer's {@link #position()} + {@code position}
      * and an adjusted capacity equal to {@code length}.
      */
@@ -131,12 +131,15 @@ public interface ReadableBuffer extends Retainable
      * {@link #position()} and {@link #remaining()}) moved to position 0.
      * @return this, typed as a {@link WritableBuffer}
      * // TODO throw ISE when isRetained() == true?
+     * // TODO should toWritable() always compact, or take a boolean instead of this?
+     * // TODO should this leave the buffer in readable mode and return void? It feels like compacting should only ever be done right before flipping to write mode.
      */
     WritableBuffer compact();
 
     /**
      * Drains and drops all unread bytes from this ReadableBuffer and resets the position to 0.
      * // TODO throw ISE when isRetained() == true?
+     * // TODO is this method really useful? shouldn't it be removed?
      */
     void drain();
 
@@ -144,6 +147,7 @@ public interface ReadableBuffer extends Retainable
      * Flips this WritableBuffer to fill mode
      * @return this, typed as a {@link ReadableBuffer}
      * // TODO throw ISE when isRetained() == true?
+     * // TODO should this auto-compact when empty but not at position 0? Or always auto-compact?
      */
     WritableBuffer toWritable();
 
