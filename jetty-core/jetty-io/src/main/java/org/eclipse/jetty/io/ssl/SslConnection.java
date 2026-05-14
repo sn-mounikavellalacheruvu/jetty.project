@@ -345,7 +345,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
         assert _lock.isHeldByCurrentThread();
         if (_encryptedInput == null)
             return _bufferPool.acquire(getPacketBufferSize(), _encryptedDirectBuffers);
-        WritableBuffer wb = _encryptedInput.toWritable();
+        WritableBuffer wb = _encryptedInput.compact();
         _encryptedInput = null;
         return wb;
     }
@@ -490,48 +490,46 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
             connection instanceof AbstractConnection ? ((AbstractConnection)connection).toConnectionString() : connection);
     }
 
-    private void lockedReleaseEmptyEncryptedInputBuffer()
+    private void lockedDiscardInputBuffers()
     {
         assert _lock.isHeldByCurrentThread();
-        if (_encryptedInput != null && _encryptedInput.remaining() == 0L)
+        if (_encryptedInput != null)
         {
             _encryptedInput.release();
             _encryptedInput = null;
         }
-    }
-
-    private void lockedReleaseEmptyDecryptedInputBuffer()
-    {
-        assert _lock.isHeldByCurrentThread();
-        if (_decryptedInput != null && _decryptedInput.remaining() == 0L)
+        if (_decryptedInput != null)
         {
             _decryptedInput.release();
             _decryptedInput = null;
         }
     }
 
-    private void lockedDiscardInputBuffers()
+    private void lockedReleaseEmptyInputBuffers(ReadableBuffer encryptedInput, ReadableBuffer decryptedInput)
     {
         assert _lock.isHeldByCurrentThread();
-        if (_encryptedInput != null)
-            _encryptedInput.drain();
-        if (_decryptedInput != null)
-            _decryptedInput.drain();
-        lockedReleaseEmptyInputBuffers();
-    }
+        assert _encryptedInput == null;
+        assert _decryptedInput == null;
 
-    private void lockedReleaseEmptyInputBuffers()
-    {
-        lockedReleaseEmptyEncryptedInputBuffer();
-        lockedReleaseEmptyDecryptedInputBuffer();
+        if (encryptedInput != null && encryptedInput.remaining() == 0L)
+            encryptedInput.release();
+        else
+            _encryptedInput = encryptedInput;
+
+        if (decryptedInput != null && decryptedInput.remaining() == 0L)
+            decryptedInput.release();
+        else
+            _decryptedInput = decryptedInput;
     }
 
     private void lockedDiscardEncryptedOutputBuffer()
     {
         assert _lock.isHeldByCurrentThread();
         if (_encryptedOutput != null)
-            _encryptedOutput.drain();
-        lockedReleaseEmptyEncryptedOutputBuffer();
+        {
+            _encryptedOutput.release();
+            _encryptedOutput = null;
+        }
     }
 
     private void lockedReleaseEmptyEncryptedOutputBuffer()
@@ -717,8 +715,10 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                         LOG.debug(">fill {}", SslConnection.this);
 
                     int filled = -2;
-                    ReadableBuffer appIn = null;
-                    boolean appInWrapsUserProvidedBuffer = false;
+                    ReadableBuffer decryptedInput = null;
+                    boolean decryptedInputWrapsUserProvidedBuffer = false;
+                    ReadableBuffer encryptedInput = null;
+                    long encryptedInputRemainingWriteSpace;
                     try
                     {
                         if (_fillState != FillState.IDLE)
@@ -766,22 +766,37 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
 
                             // Let's try reading some encrypted data... even if we have some already.
                             int netFilled;
-                            WritableBuffer wb = lockedAcquireEncryptedInput();
-                            try
                             {
-                                netFilled = networkFill(wb);
+                                WritableBuffer wb;
+                                if (encryptedInput == null)
+                                {
+                                    wb = lockedAcquireEncryptedInput();
+                                }
+                                else
+                                {
+                                    wb = encryptedInput.compact();
+                                    encryptedInput = null;
+                                }
+                                try
+                                {
+                                    netFilled = networkFill(wb);
+                                    encryptedInputRemainingWriteSpace = wb.remaining();
+                                    encryptedInput = wb.toReadable();
+                                }
+                                catch (Throwable x)
+                                {
+                                    wb.release();
+                                    throw x;
+                                }
                             }
-                            finally
-                            {
-                                _encryptedInput = wb.toReadable();
-                            }
+
                             if (netFilled > 0)
                                 _bytesIn.addAndGet(netFilled);
                             if (LOG.isDebugEnabled())
                                 LOG.debug("net filled={}", netFilled);
 
                             // Workaround for Java 11 behavior.
-                            if (netFilled < 0 && isHandshakeInitial() && (_encryptedInput == null || _encryptedInput.remaining() == 0L))
+                            if (netFilled < 0 && isHandshakeInitial() && encryptedInput.remaining() == 0L)
                                 closeInbound();
 
                             if (netFilled > 0 && !isHandshakeComplete() && isOutboundDone())
@@ -798,44 +813,61 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                             {
                                 // can we use the passed buffer if it is big enough
                                 WritableBuffer writableAppIn;
-                                if (_decryptedInput == null)
+                                if (decryptedInput != null)
+                                {
+                                    // Re-use the buffer acquired in a previous loop iteration.
+                                    writableAppIn = decryptedInput.compact();
+                                    decryptedInput = null;
+                                }
+                                else if (_decryptedInput == null)
                                 {
                                     if (BufferUtil.space(buffer) > appBufferSize)
                                     {
+                                        // Use the caller-provided buffer.
                                         writableAppIn = ReadableBuffer.wrap(buffer).toWritable();
-                                        appInWrapsUserProvidedBuffer = true;
+                                        decryptedInputWrapsUserProvidedBuffer = true;
                                     }
                                     else
                                     {
+                                        // Acquire a fresh new buffer.
                                         writableAppIn = _bufferPool.acquire(appBufferSize, _decryptedDirectBuffers);
                                     }
                                 }
                                 else
                                 {
+                                    // Re-use the non-empty buffer stored by a previous fill() call.
                                     writableAppIn = _decryptedInput.toWritable();
                                     _decryptedInput = null;
                                 }
 
-                                // Let's unwrap even if we have no net data because in that
-                                // case we want to fall through to the handshake handling
-                                SSLEngineResult[] unwrapResultArray = new SSLEngineResult[1];
-                                _underflown = false;
-                                _encryptedInput.writeTo(input -> writableAppIn.readFrom(output ->
+                                try
                                 {
-                                    SSLEngineResult unwrapResult1 = SslConnection.this.unwrap(_sslEngine, input, output);
-                                    unwrapResultArray[0] = unwrapResult1;
-                                    return unwrapResult1.getStatus() == Status.CLOSED;
-                                }));
-                                unwrapResult = unwrapResultArray[0];
-                                appIn = writableAppIn.toReadable();
+                                    // Let's unwrap even if we have no net data because in that
+                                    // case we want to fall through to the handshake handling
+                                    SSLEngineResult[] unwrapResultArray = new SSLEngineResult[1];
+                                    _underflown = false;
+                                    encryptedInput.writeTo(input -> writableAppIn.readFrom(output ->
+                                    {
+                                        SSLEngineResult unwrapResult1 = SslConnection.this.unwrap(_sslEngine, input, output);
+                                        unwrapResultArray[0] = unwrapResult1;
+                                        return unwrapResult1.getStatus() == Status.CLOSED;
+                                    }));
+                                    unwrapResult = unwrapResultArray[0];
+                                    decryptedInput = writableAppIn.toReadable();
+                                }
+                                catch (Throwable x)
+                                {
+                                    writableAppIn.release();
+                                    throw x;
+                                }
                             }
 
                             if (LOG.isDebugEnabled())
                                 LOG.debug("unwrap net_filled={} {} encryptedBuffer={} unwrapBuffer={} appBuffer={}",
                                     netFilled,
                                     StringUtil.replace(unwrapResult.toString(), '\n', ' '),
-                                    _encryptedInput,
-                                    appIn,
+                                    encryptedInput,
+                                    decryptedInput,
                                     BufferUtil.toDetailString(buffer));
 
                             Status unwrap = unwrapResult.getStatus();
@@ -854,19 +886,9 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                     return filled = -1;
 
                                 case BUFFER_UNDERFLOW:
-                                    // Continue if we can compact?
-                                    long remainingBefore = remainingForWrite(_encryptedInput);
-                                    _encryptedInput.compact().toReadable();
-                                    long remainingAfter = remainingForWrite(_encryptedInput);
-                                    if (remainingAfter > remainingBefore)
-                                        continue;
-
                                     // Are we out of space?
-                                    if (remainingForWrite(_encryptedInput) == 0L)
-                                    {
-                                        _encryptedInput.drain();
+                                    if (encryptedInputRemainingWriteSpace == 0L)
                                         throw new SSLHandshakeException("Encrypted buffer max length exceeded");
-                                    }
 
                                     // if we just filled some
                                     if (netFilled > 0)
@@ -894,11 +916,8 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                     // too small. Release the decrypted input buffer so it will be re-acquired
                                     // with the larger capacity.
                                     // See also system property "jsse.SSLEngine.acceptLargeFragments".
-                                    if ((appIn == null || appIn.remaining() == 0L) && appBufferSize < getApplicationBufferSize())
-                                    {
-                                        lockedReleaseEmptyDecryptedInputBuffer();
+                                    if ((decryptedInput == null || decryptedInput.remaining() == 0L) && appBufferSize < getApplicationBufferSize())
                                         continue;
-                                    }
                                     throw new IllegalStateException("Unexpected unwrap result " + unwrap);
 
                                 case OK:
@@ -913,9 +932,9 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                     // another call to fill() or flush().
                                     if (unwrapResult.bytesProduced() > 0)
                                     {
-                                        if (appInWrapsUserProvidedBuffer)
+                                        if (decryptedInputWrapsUserProvidedBuffer)
                                             return filled = unwrapResult.bytesProduced();
-                                        filled = append(buffer, appIn);
+                                        filled = append(buffer, decryptedInput);
                                         return filled;
                                     }
 
@@ -928,10 +947,15 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                     }
                     catch (Throwable x)
                     {
-                        if (appIn != null)
+                        if (decryptedInput != null)
                         {
-                            appIn.release();
-                            appIn = null;
+                            decryptedInput.release();
+                            decryptedInput = null;
+                        }
+                        if (encryptedInput != null)
+                        {
+                            encryptedInput.release();
+                            encryptedInput = null;
                         }
                         lockedDiscardInputBuffers();
                         Throwable f = handleException(x, "fill");
@@ -945,9 +969,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                     }
                     finally
                     {
-                        if (!appInWrapsUserProvidedBuffer)
-                            _decryptedInput = appIn;
-                        lockedReleaseEmptyInputBuffers();
+                        lockedReleaseEmptyInputBuffers(encryptedInput, decryptedInputWrapsUserProvidedBuffer ? null : decryptedInput);
 
                         if (_flushState == FlushState.WAIT_FOR_FILL)
                         {
@@ -1810,20 +1832,6 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
         {
             return String.format("SSL:%s:%s:%s", SslConnection.this, _operation, getInvocationType());
         }
-    }
-
-    // TODO this looks like a useful helper that might become very common. Generalize?
-    //  Or create a ReadableBuffer API to query WritableBuffer remaining without flipping?
-    //  Or expose both methods (remainingForWrite() and remainingForRead()) in both ReadableBuffer and WritableBuffer?
-    //  The latter will prevent bugs that are easy to introduce where ReadableBuffer.remaining() (how many bytes can still be
-    //  consumed from the buffer) is called in place of WritableBuffer.remaining() (how many free bytes are there in the buffer)
-    //  and vice-versa.
-    private static int remainingForWrite(ReadableBuffer rb)
-    {
-        WritableBuffer wb = rb.toWritable();
-        long remaining = wb.remaining();
-        wb.toReadable();
-        return (int)remaining;
     }
 
     // TODO this should be moved to a new ReadableBuffer.get(ByteBuffer) method,
