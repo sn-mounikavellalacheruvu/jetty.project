@@ -594,7 +594,6 @@ public class BufferUtil
         return filled;
     }
 
-
     /**
      * Append bytes to a buffer.
      *
