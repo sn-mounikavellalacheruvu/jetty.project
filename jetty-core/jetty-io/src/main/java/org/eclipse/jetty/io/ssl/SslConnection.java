@@ -714,6 +714,13 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                     if (LOG.isDebugEnabled())
                         LOG.debug(">fill {}", SslConnection.this);
 
+                    if (_fillState != FillState.IDLE)
+                        return 0;
+
+                    // Do we already have some decrypted data?
+                    if (_decryptedInput != null && _decryptedInput.remaining() > 0L)
+                        return BufferUtil.put(_decryptedInput, buffer);
+
                     int filled = -2;
                     ReadableBuffer decryptedInput = null;
                     boolean decryptedInputWrapsUserProvidedBuffer = false;
@@ -721,16 +728,6 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                     long encryptedInputRemainingWriteSpace;
                     try
                     {
-                        if (_fillState != FillState.IDLE)
-                            return filled = 0;
-
-                        // Do we already have some decrypted data?
-                        if (_decryptedInput != null && _decryptedInput.remaining() > 0L)
-                        {
-                            filled = append(buffer, _decryptedInput);
-                            return filled;
-                        }
-
                         // loop filling and unwrapping until we have something
                         while (true)
                         {
@@ -836,7 +833,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                 else
                                 {
                                     // Re-use the non-empty buffer stored by a previous fill() call.
-                                    writableAppIn = _decryptedInput.toWritable();
+                                    writableAppIn = _decryptedInput.compact();
                                     _decryptedInput = null;
                                 }
 
@@ -934,8 +931,7 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                                     {
                                         if (decryptedInputWrapsUserProvidedBuffer)
                                             return filled = unwrapResult.bytesProduced();
-                                        filled = append(buffer, decryptedInput);
-                                        return filled;
+                                        return filled = BufferUtil.put(decryptedInput, buffer);
                                     }
 
                                     break;
@@ -1832,27 +1828,5 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
         {
             return String.format("SSL:%s:%s:%s", SslConnection.this, _operation, getInvocationType());
         }
-    }
-
-    // TODO this should be moved to a new ReadableBuffer.get(ByteBuffer) method,
-    //  but do we consider a mode for "ByteBuffer to"?
-    private static int append(ByteBuffer to, ReadableBuffer from)
-    {
-        int pos = BufferUtil.flipToFill(to);
-        int filled;
-        if (to.remaining() >= from.remaining())
-        {
-            filled = (int)from.remaining();
-            WritableBuffer.wrap(to).put(from);
-        }
-        else
-        {
-            filled = to.remaining();
-            ReadableBuffer slice = from.slice(from.position(), to.remaining());
-            WritableBuffer.wrap(to).put(slice);
-            slice.release();
-        }
-        BufferUtil.flipToFlush(to, pos);
-        return filled;
     }
 }
