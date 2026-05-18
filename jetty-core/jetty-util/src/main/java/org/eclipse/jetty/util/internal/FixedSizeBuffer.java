@@ -17,7 +17,9 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 
+import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Retainable;
+import org.eclipse.jetty.util.TypeUtil;
 import org.eclipse.jetty.util.buffer.ReadableBuffer;
 import org.eclipse.jetty.util.buffer.WritableBuffer;
 
@@ -230,6 +232,16 @@ public class FixedSizeBuffer implements WritableBuffer, ReadableBuffer
         boolean eof = fount.read(byteBuffer);
         int read = remainingBefore - byteBuffer.remaining();
         return read == 0L && eof ? -1L : read;
+    }
+
+    @Override
+    public String toString()
+    {
+        return String.format("%s@%x{b=%s,r=%s}",
+            TypeUtil.toShortName(getClass()),
+            hashCode(),
+            BufferUtil.toDetailString(byteBuffer),
+            retainable);
     }
 
     // Retainable
