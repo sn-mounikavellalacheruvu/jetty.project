@@ -719,7 +719,15 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
 
                     // Do we already have some decrypted data?
                     if (_decryptedInput != null && _decryptedInput.remaining() > 0L)
-                        return BufferUtil.put(_decryptedInput, buffer);
+                    {
+                        int put = BufferUtil.put(_decryptedInput, buffer);
+                        if (_decryptedInput.remaining() == 0L)
+                        {
+                            _decryptedInput.release();
+                            _decryptedInput = null;
+                        }
+                        return put;
+                    }
 
                     int filled = -2;
                     ReadableBuffer decryptedInput = null;
@@ -953,7 +961,6 @@ public class SslConnection extends AbstractConnection implements Connection.Upgr
                             encryptedInput.release();
                             encryptedInput = null;
                         }
-                        lockedDiscardInputBuffers();
                         Throwable f = handleException(x, "fill");
                         Throwable failure = handshakeFailed(f);
                         if (_flushState == FlushState.WAIT_FOR_FILL)
