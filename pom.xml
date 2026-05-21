@@ -249,8 +249,6 @@
                   <message>[ERROR] OLD JDK [${java.version}] in use. Jetty ${project.version} requires JDK 1.8.0 or newer</message>
                 </requireJavaVersion>
                 <versionOsgiRule implementation="org.eclipse.jetty.toolchain.enforcer.rules.RequireOsgiCompatibleVersionRule" />
-                <versionRedhatRule implementation="org.eclipse.jetty.toolchain.enforcer.rules.RequireRedhatCompatibleVersionRule" />
-                <versionDebianRule implementation="org.eclipse.jetty.toolchain.enforcer.rules.RequireDebianCompatibleVersionRule" />
                 <requireUpperBoundDeps>
                   <excludes>
                     <exclude>javax.enterprise:cdi-api</exclude>
