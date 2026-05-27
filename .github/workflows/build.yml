@@ -1,0 +1,88 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - 'jetty-9.4.x'
+      - 'release/**'
+      - 'scratch/**'
+  pull_request:
+    branches:
+      - 'jetty-9.4.x'
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip tests'
+        required: false
+        default: 'false'
+        type: boolean
+      skip_javadoc:
+        description: 'Skip Javadoc'
+        required: false
+        default: 'false'
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build / Test (JDK ${{ matrix.java }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [ '8' ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ matrix.java }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: temurin
+          cache: maven
+
+      - name: Build and Test
+        run: |
+          SKIP_TESTS=${{ inputs.skip_tests || 'false' }}
+          if [ "$SKIP_TESTS" = "true" ]; then
+            mvn --no-transfer-progress -Dmaven.repo.local=.repository -Pci -V -B -e clean install -DskipTests -Dunix.socket.tmp=/tmp/unixsocket
+          else
+            mvn --no-transfer-progress -Dmaven.repo.local=.repository -Pci -V -B -e clean install -Dunix.socket.tmp=/tmp/unixsocket
+          fi
+        env:
+          MAVEN_OPTS: -Xms2g -Xmx4g -Djava.awt.headless=true
+
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-jdk${{ matrix.java }}
+          path: '**/target/surefire-reports/*.xml'
+          if-no-files-found: ignore
+
+  javadoc:
+    name: Javadoc
+    runs-on: ubuntu-latest
+    if: ${{ inputs.skip_javadoc != 'true' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: temurin
+          cache: maven
+
+      - name: Build Javadoc
+        run: mvn --no-transfer-progress -Dmaven.repo.local=.repository -V -B -e install javadoc:javadoc javadoc:aggregate-jar -DskipTests -Dpmd.skip=true -Dcheckstyle.skip=true -Dunix.socket.tmp=/tmp/unixsocket
+        env:
+          MAVEN_OPTS: -Xms2g -Xmx4g -Djava.awt.headless=true

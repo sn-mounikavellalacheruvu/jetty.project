@@ -1,0 +1,78 @@
+name: Publish
+
+on:
+  push:
+    branches:
+      - 'jetty-9.4.x'
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub Release with JARs'
+        required: false
+        default: 'false'
+        type: boolean
+      branch:
+        description: 'Branch to publish from (e.g. jetty-9.4.x)'
+        required: false
+        default: 'jetty-9.4.x'
+        type: string
+
+jobs:
+  publish:
+    name: Publish to GitHub Packages
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write       # needed to create GitHub Releases
+      packages: write       # needed to publish to GitHub Packages
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: temurin
+          cache: maven
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+
+      - name: Publish to GitHub Packages
+        run: |
+          mvn --no-transfer-progress -B -V \
+            -DskipTests \
+            -Dpmd.skip=true \
+            -Dcheckstyle.skip=true \
+            clean deploy
+        env:
+          MAVEN_OPTS: -Xms2g -Xmx4g -Djava.awt.headless=true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Collect JARs for release
+        if: ${{ inputs.create_release == 'true' || startsWith(github.ref, 'refs/heads/release/') }}
+        run: |
+          mkdir -p release-jars
+          find jetty-http/target   -name "jetty-http-*.jar"   ! -name "*-tests.jar" -exec cp {} release-jars/ \;
+          find jetty-server/target -name "jetty-server-*.jar" ! -name "*-tests.jar" -exec cp {} release-jars/ \;
+          find jetty-util/target   -name "jetty-util-*.jar"   ! -name "*-tests.jar" -exec cp {} release-jars/ \;
+          find jetty-home/target   -name "jetty-home-*.tar.gz"                      -exec cp {} release-jars/ \;
+          echo "Collected artifacts:"
+          ls -lh release-jars/
+
+      - name: Create GitHub Release
+        if: ${{ inputs.create_release == 'true' || startsWith(github.ref, 'refs/heads/release/') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          gh release create "v${VERSION}" \
+            --title "Jetty ${VERSION} (CVE patch)" \
+            --notes "Patched build of Jetty ${VERSION} addressing CVE security fix. See PR for details." \
+            --prerelease \
+            release-jars/*
