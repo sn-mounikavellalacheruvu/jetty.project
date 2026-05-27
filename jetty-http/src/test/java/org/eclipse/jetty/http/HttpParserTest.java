@@ -1271,6 +1271,446 @@ public class HttpParserTest
         assertTrue(_early);
     }
 
+    // CVE-2026-2332: HTTP request smuggling via CRLF inside quoted chunk extension value
+    @Test
+    public void testChunkExtQuotedStringWithEmbeddedCRLF()
+    {
+        // Attempt to smuggle a second request by embedding CRLF inside a quoted chunk extension.
+        // The parser must reject this (earlyEOF), not treat the embedded CRLF as end-of-line.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /target HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;ext=\"smuggled\r\n" +
+                "GET /evil HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "\r\n" +
+                "\"\r\n" +
+                "hello\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        // badMessage() calls earlyEOF() (not handler.badMessage()) when headers are already
+        // complete (_headerComplete == true), which is the case here since we are in CHUNK_PARAMS.
+        // See HttpParser.badMessage(BadMessageException).
+        assertTrue(_early);
+        assertNull(_bad);
+        // Without the fix the LF is treated as a real chunk-line end; the parser enters CHUNK
+        // state and reads 5 bytes of body ("GET /") before failing later. The fix rejects the
+        // request in CHUNK_PARAMS before any body bytes are delivered to the handler.
+        assertNull(_content);
+        assertFalse(_contentCompleted);
+        assertFalse(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtQuotedStringWithEmbeddedLFOnly()
+    {
+        // Bare LF inside a quoted chunk extension must also be rejected.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /target HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;ext=\"bad\nvalue\"\r\n" +
+                "hello\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        // badMessage() calls earlyEOF() (not handler.badMessage()) when headers are already
+        // complete (_headerComplete == true), which is the case here since we are in CHUNK_PARAMS.
+        // See HttpParser.badMessage(BadMessageException).
+        assertTrue(_early);
+        assertNull(_bad);
+        // Without the fix the bare LF ends the chunk-params line; the parser reads "value" as 5
+        // bytes of chunk body before failing on the mismatched chunk terminator. The fix rejects
+        // the request in CHUNK_PARAMS before any body bytes are delivered to the handler.
+        assertNull(_content);
+        assertFalse(_contentCompleted);
+        assertFalse(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtQuotedStringNormal()
+    {
+        // A well-formed quoted chunk extension must be accepted.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "GET /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "a;ext=\"safe value\"\r\n" +
+                "0123456789\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        assertNull(_bad);
+        assertEquals("0123456789", _content);
+        assertTrue(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtQuotedStringWithEscapedQuote()
+    {
+        // A quoted-pair (backslash-escaped quote) inside a chunk extension must be accepted.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "GET /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "a;ext=\"val\\\"ue\"\r\n" +
+                "0123456789\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        assertNull(_bad);
+        assertEquals("0123456789", _content);
+        assertTrue(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtQuotedStringWithBareCR()
+    {
+        // A bare CR not followed by LF is illegal in HTTP (next() recurses on CR; the following
+        // non-LF byte triggers BadMessageException("Bad EOL") at the _cr-check in next()).
+        // The request must be rejected even though the CR appears inside a quoted extension.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "GET /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "a;ext=\"val\rend\"\r\n" +
+                "0123456789\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        // badMessage() calls earlyEOF() (not handler.badMessage()) when headers are already
+        // complete (_headerComplete == true). See HttpParser.badMessage(BadMessageException).
+        assertTrue(_early);
+        assertNull(_bad);
+        // A bare CR causes "Bad EOL" inside next() regardless of the fix, so _content stays null
+        // in both cases. These assertions document the expected clean state after rejection.
+        assertNull(_content);
+        assertFalse(_contentCompleted);
+        assertFalse(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtQuotedStringSmuggleOnSecondChunk()
+    {
+        // Smuggling attempt in the quoted extension of the second chunk (not the first).
+        // The state machine must track quote state independently per chunk line.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /target HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;ext=\"normal\"\r\n" +
+                "hello\r\n" +
+                "5;ext=\"smuggled\r\n" +
+                "GET /evil HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "\r\n" +
+                "\"\r\n" +
+                "world\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        // badMessage() calls earlyEOF() (not handler.badMessage()) when headers are already
+        // complete (_headerComplete == true), which is the case here since we are in CHUNK_PARAMS.
+        // See HttpParser.badMessage(BadMessageException).
+        assertTrue(_early);
+        assertNull(_bad);
+        // Without the fix the CRLF in the second chunk's extension is treated as chunk-end; the
+        // parser enters CHUNK state and delivers "GET /" (5 smuggled bytes) to the handler, giving
+        // _content="helloGET /". The fix stops parsing at the bad CHUNK_PARAMS line, so only the
+        // legitimately delivered first chunk body ("hello") must be present.
+        assertEquals("hello", _content);
+        assertFalse(_contentCompleted);
+        assertFalse(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtQuotedStringSmuggleOnTerminalChunk()
+    {
+        // Smuggling attempt in the quoted extension of the zero-length terminal chunk.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /target HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5\r\n" +
+                "hello\r\n" +
+                "0;ext=\"smuggled\r\n" +
+                "GET /evil HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "\r\n" +
+                "\"\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        // badMessage() calls earlyEOF() (not handler.badMessage()) when headers are already
+        // complete (_headerComplete == true), which is the case here since we are in CHUNK_PARAMS.
+        // See HttpParser.badMessage(BadMessageException).
+        assertTrue(_early);
+        assertNull(_bad);
+        // Without the fix the CRLF in the terminal chunk's extension is treated as chunk-end;
+        // chunkLength==0 causes contentComplete() to be called (setting _contentCompleted=true)
+        // before the TRAILER parser chokes on the smuggled request line. The fix rejects the
+        // request inside CHUNK_PARAMS, so contentComplete() is never invoked.
+        assertEquals("hello", _content);
+        assertFalse(_contentCompleted);
+        assertFalse(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtMultipleExtensionsSmuggleInSecond()
+    {
+        // Smuggling attempt in the second of multiple semicolon-separated chunk extensions.
+        // Quote tracking must survive across extension parameters on the same chunk line.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /target HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;a=1;b=\"smuggled\r\n" +
+                "GET /evil HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "\r\n" +
+                "\"\r\n" +
+                "hello\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        // badMessage() calls earlyEOF() (not handler.badMessage()) when headers are already
+        // complete (_headerComplete == true), which is the case here since we are in CHUNK_PARAMS.
+        // See HttpParser.badMessage(BadMessageException).
+        assertTrue(_early);
+        assertNull(_bad);
+        // Without the fix the CRLF after the second extension is treated as chunk-end; the parser
+        // reads 5 bytes of body ("GET /") before failing. The fix rejects in CHUNK_PARAMS so no
+        // body bytes reach the handler.
+        assertNull(_content);
+        assertFalse(_contentCompleted);
+        assertFalse(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtBackslashBeforeCRLF()
+    {
+        // A backslash immediately before CRLF inside a quoted chunk extension must be rejected.
+        // _chunkExtQuotedPair is true when LF arrives; the LF handler also sees _chunkExtInQuote
+        // is true and must throw rather than treating the LF as a valid quoted-pair character.
+        // Without the fix the CRLF is accepted as the chunk-line terminator and the subsequent
+        // bytes are parsed as chunk body — the request appears to succeed silently.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "POST /target HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;ext=\"val\\\r\n" +
+                "hello\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        assertTrue(_early);
+        assertNull(_bad);
+        // Without the fix the backslash+CRLF ends chunk-params; "hello" is read as body and the
+        // message completes successfully. The fix must reject before any body bytes are delivered.
+        assertNull(_content);
+        assertFalse(_contentCompleted);
+        assertFalse(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtEmptyQuotedString()
+    {
+        // An empty quoted chunk extension ("") must be accepted. The quote opens and closes
+        // immediately, leaving _chunkExtInQuote=false before the CRLF arrives.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "GET /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;ext=\"\"\r\n" +
+                "hello\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        assertNull(_bad);
+        assertFalse(_early);
+        assertEquals("hello", _content);
+        assertTrue(_contentCompleted);
+        assertTrue(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtEscapedBackslashBeforeClosingQuote()
+    {
+        // A quoted-pair "\\": the first backslash escapes the second, so the second backslash is
+        // a literal character (not an escape introducer). The following quote must close the string
+        // normally and the request must be accepted.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "GET /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;ext=\"val\\\\\"\r\n" +
+                "hello\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        assertNull(_bad);
+        assertFalse(_early);
+        assertEquals("hello", _content);
+        assertTrue(_contentCompleted);
+        assertTrue(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtMultipleValidQuotedExtensions()
+    {
+        // Two quoted extension parameters on the same chunk line. The quote state machine must
+        // correctly open and close _chunkExtInQuote for each, ending with it false before CRLF.
+        ByteBuffer buffer = BufferUtil.toBuffer(
+            "GET /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;a=\"v1\";b=\"v2\"\r\n" +
+                "hello\r\n" +
+                "0\r\n" +
+                "\r\n");
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+        parseAll(parser, buffer);
+
+        assertNull(_bad);
+        assertFalse(_early);
+        assertEquals("hello", _content);
+        assertTrue(_contentCompleted);
+        assertTrue(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtSplitBufferSmuggle()
+    {
+        // Smuggling attempt where the buffer boundary falls right after the opening quote, so
+        // _chunkExtInQuote is true at the end of the first parseNext() call. The fix must persist
+        // that flag across the call boundary and reject the LF that arrives in the second buffer.
+        // Without the fix there is no flag to persist; the LF in the second buffer is accepted as
+        // chunk-line end and smuggled bytes are delivered as body content.
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+
+        ByteBuffer buf1 = BufferUtil.toBuffer(
+            "POST /target HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;ext=\"");
+        ByteBuffer buf2 = BufferUtil.toBuffer(
+            "smuggled\r\n" +
+                "GET /evil HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "\r\n" +
+                "\"\r\n" +
+                "hello\r\n" +
+                "0\r\n" +
+                "\r\n");
+
+        parser.parseNext(buf1);
+        parser.parseNext(buf2);
+
+        assertTrue(_early);
+        assertNull(_bad);
+        // Without the fix "smugg" (first 5 bytes of "smuggled...") is read as chunk body.
+        // The fix preserves _chunkExtInQuote=true across the buffer boundary and rejects at LF.
+        assertNull(_content);
+        assertFalse(_contentCompleted);
+        assertFalse(_messageCompleted);
+    }
+
+    @Test
+    public void testChunkExtStateResetBetweenRequests()
+    {
+        // reset() must clear _chunkExtInQuote (and _chunkExtQuotedPair). If it does not, a new
+        // request parsed on the same parser after the flags were left true (e.g. because the
+        // previous connection was abandoned mid-chunk-extension) will falsely reject its own
+        // well-formed quoted extensions: the LF that legitimately ends the chunk-params line
+        // would be seen while the parser thinks it is still inside a quoted string.
+        HttpParser.RequestHandler handler = new Handler();
+        HttpParser parser = new HttpParser(handler);
+
+        // Partially parse a request whose buffer ends inside a quoted chunk extension.
+        // With the fix applied, _chunkExtInQuote is true when the buffer is exhausted.
+        ByteBuffer partial = BufferUtil.toBuffer(
+            "POST /first HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;ext=\"incomplete");
+        parser.parseNext(partial);
+
+        // Simulate server-side connection reset (e.g. client disconnect mid-stream).
+        parser.reset();
+        init();
+
+        // A fresh request with a well-formed quoted chunk extension must be accepted after reset.
+        // If reset() forgot to clear _chunkExtInQuote, the extension "v2" would be parsed as
+        // in-quote content; the closing " would end the stale quote; the token "v2" that follows
+        // would re-open a quote; and the CRLF would then be rejected as LF-in-quote.
+        ByteBuffer fresh = BufferUtil.toBuffer(
+            "GET /second HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "5;ext=\"v2\"\r\n" +
+                "world\r\n" +
+                "0\r\n" +
+                "\r\n");
+        parseAll(parser, fresh);
+
+        assertNull(_bad);
+        assertFalse(_early);
+        assertEquals("world", _content);
+        assertTrue(_contentCompleted);
+        assertTrue(_messageCompleted);
+    }
+
     @Test
     public void testMultiParse()
     {
