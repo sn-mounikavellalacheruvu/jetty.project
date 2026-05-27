@@ -49,6 +49,7 @@ jobs:
 
       - name: Build and Test
         run: |
+          mkdir -p /tmp/unixsocket
           SKIP_TESTS=${{ inputs.skip_tests || 'false' }}
           if [ "$SKIP_TESTS" = "true" ]; then
             mvn --no-transfer-progress -Dmaven.repo.local=.repository -Pci -V -B -e clean install -DskipTests -Dunix.socket.tmp=/tmp/unixsocket
